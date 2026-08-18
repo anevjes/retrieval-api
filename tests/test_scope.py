@@ -32,6 +32,16 @@ def test_selected_sites_build_validated_kql() -> None:
     )
 
 
+def test_document_library_path_uses_canonical_spaces_in_kql() -> None:
+    scope = SharePointScope.selected_sites(
+        ["https://contoso.sharepoint.com/sites/Sales/Shared%20Documents/"]
+    )
+
+    assert scope.filter_expression == (
+        'Path:"https://contoso.sharepoint.com/sites/Sales/Shared Documents/"'
+    )
+
+
 def test_post_filter_uses_path_boundaries() -> None:
     scope = SharePointScope.selected_sites(
         ["https://contoso.sharepoint.com/sites/HR/"]

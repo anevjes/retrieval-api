@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 _SHAREPOINT_HOST_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*\.sharepoint\.com$")
-_URL_PATH_SAFE_CHARACTERS = "/:@!$&'()*+,;=-._~"
+# KQL Path examples use canonical SharePoint paths such as "Shared Documents". The entire value is
+# quoted, so spaces are safe; other unsafe URL/KQL characters remain percent-encoded.
+_KQL_PATH_SAFE_CHARACTERS = "/:@!$&'()*+,;=-._~ "
 
 
 class ScopeValidationError(ValueError):
@@ -22,7 +24,7 @@ def _normalize_path(path: str, *, trailing_slash: bool) -> str:
     if any(segment in {".", ".."} for segment in decoded.split("/")):
         raise ScopeValidationError("SharePoint paths cannot contain dot segments.")
     normalized = posixpath.normpath("/" + decoded.lstrip("/"))
-    encoded = quote(normalized, safe=_URL_PATH_SAFE_CHARACTERS)
+    encoded = quote(normalized, safe=_KQL_PATH_SAFE_CHARACTERS)
     if trailing_slash and encoded != "/" and not encoded.endswith("/"):
         encoded += "/"
     return encoded

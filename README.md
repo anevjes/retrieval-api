@@ -141,7 +141,12 @@ ALLOW_ALL_SITES=false
 ```
 
 For path filters, use the path shown in SharePoint's **Details** pane. Do not use a sharing link or an
-address-bar URL containing query parameters.
+address-bar URL containing query parameters. The app accepts `%20` in configuration but emits the
+canonical KQL form with literal spaces inside the quoted `Path` value, for example:
+
+```text
+Path:"https://contoso.sharepoint.com/sites/Sales/Shared Documents/"
+```
 
 ## Run
 

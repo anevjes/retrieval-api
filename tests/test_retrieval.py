@@ -116,6 +116,7 @@ async def test_empty_results_explain_indexing_and_query_diagnostics(caplog) -> N
 
     assert result == ()
     assert "query is short" in caplog.text
+    assert 'Path:"https://contoso.sharepoint.com/sites/Sales/Shared Documents/"' in caplog.text
     assert "indexed daily" in caplog.text
     assert "allowed to appear in search" in caplog.text
 
