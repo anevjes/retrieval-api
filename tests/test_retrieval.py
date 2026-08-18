@@ -72,6 +72,7 @@ async def test_request_is_sharepoint_only_and_results_are_post_filtered(caplog) 
     assert result[0].title == "Policy"
     assert result[0].author == "Adele"
     assert "[2/4] Retrieval: POST" in caplog.text
+    assert 'filterExpression=Path:"https://contoso.sharepoint.com/sites/HR/"' in caplog.text
     assert "returned=4; accepted=1; discarded=3" in caplog.text
     assert "delegated-token" not in caplog.text
     assert "Approved policy text" not in caplog.text
@@ -94,6 +95,29 @@ async def test_all_sites_omits_filter_expression() -> None:
     await http_client.aclose()
 
     assert result == ()
+
+
+@pytest.mark.asyncio
+async def test_empty_results_explain_indexing_and_query_diagnostics(caplog) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"retrievalHits": []})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = CopilotRetrievalClient(get_access_token, http_client=http_client)
+
+    with caplog.at_level(logging.INFO, logger="sharepoint_retrieval_agent.retrieval"):
+        result = await client.retrieve(
+            "Western Australia",
+            scope=SharePointScope.selected_sites(
+                ["https://contoso.sharepoint.com/sites/Sales/Shared%20Documents/"]
+            ),
+        )
+    await http_client.aclose()
+
+    assert result == ()
+    assert "query is short" in caplog.text
+    assert "indexed daily" in caplog.text
+    assert "allowed to appear in search" in caplog.text
 
 
 @pytest.mark.asyncio

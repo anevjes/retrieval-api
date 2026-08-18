@@ -136,8 +136,9 @@ class CopilotRetrievalClient:
         if not 1 <= maximum_results <= 25:
             raise ValueError("maximum_results must be between 1 and 25.")
 
+        query = normalize_query(question)
         payload: dict[str, object] = {
-            "queryString": normalize_query(question),
+            "queryString": query,
             # Intentionally fixed: OneDrive, connectors, mail, and Teams are never requested.
             "dataSource": "sharePoint",
             "resourceMetadata": ["title", "author"],
@@ -158,6 +159,13 @@ class CopilotRetrievalClient:
             scope_name,
             maximum_results,
         )
+        if scope.filter_expression is not None:
+            logger.info("[2/4] Retrieval: filterExpression=%s.", scope.filter_expression)
+        if len(query.split()) < 4:
+            logger.info(
+                "[2/4] Retrieval diagnostic: the query is short. Microsoft recommends a "
+                "context-rich, single-sentence query rather than generic keywords."
+            )
         started = time.perf_counter()
         try:
             response = await self._http_client.post(
@@ -192,6 +200,15 @@ class CopilotRetrievalClient:
             )
 
         raw_hits = body.get("retrievalHits", [])
+        if not raw_hits:
+            logger.warning(
+                "Retrieval API returned no hits. Confirm the signed-in user can open the scoped "
+                "library, the SharePoint site/library is allowed to appear in search, and the "
+                "files have reached the Microsoft 365 semantic index. Microsoft documents that "
+                "new documents on sites accessible through site inheritance by at least two users "
+                "are indexed daily, so a file uploaded within the last hour might not be "
+                "retrievable yet."
+            )
         documents: list[RetrievalHit] = []
         discarded = 0
         for raw_hit in raw_hits:

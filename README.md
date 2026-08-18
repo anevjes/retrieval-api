@@ -22,17 +22,9 @@ The retrieval path is intentionally **SharePoint-only**:
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    U[Signed-in user] -->|Delegated token| G[Microsoft Graph]
-    Q[Question] --> R[SharePoint-only retrieval client]
-    R -->|dataSource: sharePoint| G
-    G -->|Permission-trimmed extracts| V[URL and site-scope validator]
-    V --> C[Context builder]
-    C -->|Untrusted JSON grounding data| A[Microsoft Agent Framework]
-    A --> L[Azure OpenAI or OpenAI]
-    L --> O[Cited answer plus deterministic source links]
-```
+![SharePoint Retrieval Agent high-level architecture](docs/arch_high_level.png)
+
+[Open the editable Excalidraw architecture diagram](docs/sharepoint-retrieval-architecture.excalidraw).
 
 The application—not the model—controls the data source and site scope. The CLI uses a deterministic
 retrieve-then-synthesize flow. An optional tool-calling variant is isolated in the Inspector module.
@@ -69,16 +61,22 @@ user's SharePoint permissions in both modes.
 
 - Python 3.11 through 3.14.
 - A work or school Microsoft Entra account.
-- A Microsoft 365 Copilot add-on license, or Retrieval API pay-as-you-go enabled for tenant-level
-  SharePoint retrieval (pay-as-you-go is currently preview).
-- A Microsoft Entra app registration configured for delegated user authentication.
+- A Microsoft 365 Copilot add-on license
+- A Microsoft Entra app registration configured for delegated user authentication with
+  **Allow public client flows** enabled.
 - An LLM deployment. Azure OpenAI with the v1 Responses API is the recommended default.
+
+> [!IMPORTANT]
+> The app registration must be configured as a **public client**. In Microsoft Entra admin center,
+> open **App registrations** → your application → **Authentication** → **Advanced settings**, set
+> **Allow public client flows** to **Yes**, and select **Save**. Do not add a client secret for this
+> device-code CLI. If public client flows aren't enabled, sign-in fails with `AADSTS7000218`.
 
 The Retrieval API supports delegated permissions only. Application permissions, service principals,
 and managed identities cannot call it without a signed-in user. The sample uses MSAL Python's public
 client and device-code flow for local development; no application secret is used.
 
-## 1. Register the Microsoft Graph client
+## 1. Register the Microsoft Graph public client
 
 In Microsoft Entra admin center or Azure portal:
 
@@ -225,6 +223,25 @@ not the Object ID.
 
 The all-sites mode does not enumerate sites. It asks the Retrieval API to search SharePoint without a
 path filter, and Microsoft 365 permission-trims results to content the signed-in user may access.
+
+### Empty results for recently uploaded files
+
+A successful HTTP 200 with `returned=0` means the Retrieval API found no relevant indexed extracts;
+it does not indicate an HTTP or LLM failure. Check the following:
+
+1. Scope the query to the exact library path copied from SharePoint's **Details** pane.
+2. Use a contextual, single-sentence query such as “What sales standards apply in Western
+  Australia?” rather than only “Western Australia.”
+3. Confirm the signed-in user can open the files and that **Search and offline availability** allows
+  the site/library to appear in search.
+4. Allow time for indexing. Microsoft documents that new files on SharePoint sites accessible through
+  site inheritance by at least two users are indexed **daily**, so files uploaded an hour ago might
+  not be available to Retrieval API yet.
+5. Word `.docx` files are supported, but text in images and charts isn't retrieved. Text in tables is
+  supported for `.doc` and `.docx` files.
+
+Verbose mode prints the exact `filterExpression`, raw hit count, accepted hit count, and Graph request
+ID without printing document contents or tokens.
 
 ## How each answer is produced
 
