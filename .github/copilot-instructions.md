@@ -1,0 +1,1 @@
+This repository contains a Python SharePoint-only RAG agent. Keep `dataSource` hardcoded to `sharePoint`, preserve delegated Microsoft Graph authorization and site allowlist post-filtering, and never send unvalidated retrieval results to the LLM. Add or update tests with behavior changes.

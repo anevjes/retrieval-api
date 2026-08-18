@@ -1,0 +1,30 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug SharePoint Agent with Inspector",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": {
+        "host": "localhost",
+        "port": 5679
+      },
+      "preLaunchTask": "Open SharePoint Agent Inspector",
+      "internalConsoleOptions": "neverOpen",
+      "postDebugTask": "Terminate SharePoint Agent tasks"
+    },
+    {
+      "name": "Debug SharePoint Agent CLI",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sharepoint_retrieval_agent",
+      "args": [
+        "chat"
+      ],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ]
+}
