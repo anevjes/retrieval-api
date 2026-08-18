@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+import time
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import PurePosixPath
 from urllib.parse import unquote, urlsplit
 
 import httpx
 
-from .auth import MsalDeviceCodeTokenProvider
 from .models import RetrievalExtract, RetrievalHit
 from .scope import SharePointScope
 
@@ -109,11 +109,11 @@ class CopilotRetrievalClient:
 
     def __init__(
         self,
-        token_provider: MsalDeviceCodeTokenProvider,
+        get_access_token: Callable[[], Awaitable[str]],
         *,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._token_provider = token_provider
+        self._get_access_token = get_access_token
         self._owns_http_client = http_client is None
         self._http_client = http_client or httpx.AsyncClient(
             timeout=httpx.Timeout(30.0, connect=10.0),
@@ -146,7 +146,19 @@ class CopilotRetrievalClient:
         if scope.filter_expression is not None:
             payload["filterExpression"] = scope.filter_expression
 
-        token = await self._token_provider.get_token()
+        token = await self._get_access_token()
+        scope_name = (
+            "all accessible sites"
+            if scope.includes_all_accessible_sites
+            else f"{len(scope.site_urls)} selected site(s)"
+        )
+        logger.info(
+            "[2/4] Retrieval: POST %s (dataSource=sharePoint, scope=%s, maximum_results=%s).",
+            RETRIEVAL_ENDPOINT,
+            scope_name,
+            maximum_results,
+        )
+        started = time.perf_counter()
         try:
             response = await self._http_client.post(
                 RETRIEVAL_ENDPOINT,
@@ -179,9 +191,10 @@ class CopilotRetrievalClient:
                 request_id=request_id,
             )
 
+        raw_hits = body.get("retrievalHits", [])
         documents: list[RetrievalHit] = []
         discarded = 0
-        for raw_hit in body.get("retrievalHits", []):
+        for raw_hit in raw_hits:
             hit = _parse_hit(raw_hit)
             # The KQL filter runs in Microsoft Graph. This URL check is defense in depth because an
             # invalid KQL expression can run unscoped. Unvalidated content never reaches the LLM.
@@ -195,4 +208,15 @@ class CopilotRetrievalClient:
                 "Discarded %s result(s) that were not valid for the SharePoint scope.",
                 discarded,
             )
+        elapsed_ms = round((time.perf_counter() - started) * 1_000)
+        logger.info(
+            "[2/4] Retrieval: HTTP %s; returned=%s; accepted=%s; discarded=%s; "
+            "request_id=%s; elapsed_ms=%s.",
+            response.status_code,
+            len(raw_hits),
+            len(documents),
+            discarded,
+            request_id or "not provided",
+            elapsed_ms,
+        )
         return tuple(documents)

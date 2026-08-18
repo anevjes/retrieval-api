@@ -32,7 +32,6 @@ class GroundedAnswer:
 
     text: str
     sources: tuple[RetrievalHit, ...] = ()
-    context_was_truncated: bool = False
 
     @property
     def cited_source_indexes(self) -> tuple[int, ...]:

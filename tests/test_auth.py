@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import msal
 import pytest
 
 from sharepoint_retrieval_agent.auth import (
@@ -52,6 +53,11 @@ class FakeMsalApplication:
         return self.device_result
 
 
+def token_provider(monkeypatch, application: FakeMsalApplication) -> MsalDeviceCodeTokenProvider:
+    monkeypatch.setattr(msal, "PublicClientApplication", lambda **_: application)
+    return MsalDeviceCodeTokenProvider(tenant_id="tenant-id", client_id="client-id")
+
+
 def test_device_code_prompt_explains_the_wait(capsys) -> None:
     _show_device_code(
         {
@@ -68,16 +74,12 @@ def test_device_code_prompt_explains_the_wait(capsys) -> None:
 
 
 @pytest.mark.asyncio
-async def test_msal_reuses_a_silent_cached_token() -> None:
+async def test_msal_reuses_a_silent_cached_token(monkeypatch) -> None:
     application = FakeMsalApplication(
         accounts=[{"home_account_id": "account-1"}],
         silent_result={"access_token": "cached-token"},
     )
-    provider = MsalDeviceCodeTokenProvider(
-        tenant_id="tenant-id",
-        client_id="client-id",
-        application=application,
-    )
+    provider = token_provider(monkeypatch, application)
 
     token = await provider.get_token()
 
@@ -88,7 +90,7 @@ async def test_msal_reuses_a_silent_cached_token() -> None:
 
 
 @pytest.mark.asyncio
-async def test_msal_uses_device_flow_after_cache_miss(capsys) -> None:
+async def test_msal_uses_device_flow_after_cache_miss(monkeypatch, capsys) -> None:
     application = FakeMsalApplication(
         flow={
             "verification_uri": "https://microsoft.com/devicelogin",
@@ -97,11 +99,7 @@ async def test_msal_uses_device_flow_after_cache_miss(capsys) -> None:
         },
         device_result={"access_token": "interactive-token"},
     )
-    provider = MsalDeviceCodeTokenProvider(
-        tenant_id="tenant-id",
-        client_id="client-id",
-        application=application,
-    )
+    provider = token_provider(monkeypatch, application)
 
     token = await provider.get_token()
 
@@ -112,7 +110,7 @@ async def test_msal_uses_device_flow_after_cache_miss(capsys) -> None:
 
 
 @pytest.mark.asyncio
-async def test_msal_errors_expose_diagnostics_without_dumping_result() -> None:
+async def test_msal_errors_expose_diagnostics_without_dumping_result(monkeypatch) -> None:
     application = FakeMsalApplication(
         flow={
             "error": "invalid_client",
@@ -121,11 +119,7 @@ async def test_msal_errors_expose_diagnostics_without_dumping_result() -> None:
             "access_token": "must-not-be-printed",
         }
     )
-    provider = MsalDeviceCodeTokenProvider(
-        tenant_id="tenant-id",
-        client_id="client-id",
-        application=application,
-    )
+    provider = token_provider(monkeypatch, application)
 
     with pytest.raises(MsalAuthenticationError) as caught:
         await provider.get_token()
@@ -137,7 +131,7 @@ async def test_msal_errors_expose_diagnostics_without_dumping_result() -> None:
 
 
 @pytest.mark.asyncio
-async def test_msal_explains_public_client_configuration_error() -> None:
+async def test_msal_explains_public_client_configuration_error(monkeypatch) -> None:
     application = FakeMsalApplication(
         flow={
             "verification_uri": "https://login.microsoft.com/device",
@@ -152,11 +146,7 @@ async def test_msal_explains_public_client_configuration_error() -> None:
             "correlation_id": "correlation-7000218",
         },
     )
-    provider = MsalDeviceCodeTokenProvider(
-        tenant_id="tenant-id",
-        client_id="client-id",
-        application=application,
-    )
+    provider = token_provider(monkeypatch, application)
 
     with pytest.raises(MsalAuthenticationError) as caught:
         await provider.get_token()

@@ -1,9 +1,11 @@
 # SharePoint Retrieval Agent
 
-A runnable Python sample that uses the stable Microsoft Graph
-`POST /v1.0/copilot/retrieval` API to retrieve permission-trimmed SharePoint extracts, stitches
-those extracts into grounded context, and uses Microsoft Agent Framework plus an LLM to produce a
-cited answer.
+A small Python sample showing the complete agentic Retrieval API pattern:
+
+1. MSAL acquires a delegated Microsoft Graph token for the signed-in user.
+2. The app makes one `POST https://graph.microsoft.com/v1.0/copilot/retrieval` request.
+3. It validates the returned SharePoint URLs before using any extract as model context.
+4. Microsoft Agent Framework sends the validated extracts to an LLM and returns a cited answer.
 
 The retrieval path is intentionally **SharePoint-only**:
 
@@ -32,9 +34,36 @@ flowchart LR
     L --> O[Cited answer plus deterministic source links]
 ```
 
-The explicit retrieve-then-synthesize pipeline is deliberate: the application, not the model,
-controls the data source and site scope. An optional tool-calling version is also available for the
-Foundry Toolkit Agent Inspector.
+The application—not the model—controls the data source and site scope. The CLI uses a deterministic
+retrieve-then-synthesize flow. An optional tool-calling variant is isolated in the Inspector module.
+
+## Core Retrieval API request
+
+The request body is intentionally straightforward:
+
+```json
+{
+  "queryString": "What is the current remote work policy?",
+  "dataSource": "sharePoint",
+  "filterExpression": "Path:\"https://contoso.sharepoint.com/sites/Policies/\"",
+  "resourceMetadata": ["title", "author"],
+  "maximumNumberOfResults": 25
+}
+```
+
+For all sites the user can access, the app omits `filterExpression`. The API applies the signed-in
+user's SharePoint permissions in both modes.
+
+## Code map
+
+| File | Responsibility |
+| --- | --- |
+| `auth.py` | Acquire a delegated Graph token with MSAL. |
+| `retrieval.py` | Make the single Retrieval API request and validate its response. |
+| `scope.py` | Build safe SharePoint path filters and post-filter returned URLs. |
+| `agent.py` | Orchestrate retrieve → synthesize. |
+| `synthesis.py` | Serialize validated extracts as untrusted grounding data. |
+| `llm.py` | Call the configured LLM through Microsoft Agent Framework. |
 
 ## Prerequisites
 
@@ -89,6 +118,7 @@ Direct OpenAI is also supported with `LLM_PROVIDER=openai`.
 PowerShell:
 
 ```powershell
+py -m venv .venv
 Copy-Item .env.example .env
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
@@ -142,6 +172,24 @@ Ask against every SharePoint site visible to the signed-in user:
   --all-sites
 ```
 
+Show the call flow without logging tokens, prompts, document text, or response bodies:
+
+```powershell
+.\.venv\Scripts\python.exe -m sharepoint_retrieval_agent ask --verbose `
+  "What is the current remote work policy?" `
+  --site "https://contoso.sharepoint.com/sites/Policies/"
+```
+
+Verbose output identifies these stages:
+
+1. MSAL token cache or device-code authentication.
+2. The single Retrieval API POST and its status, result counts, request ID, and duration.
+3. Validation and grounding-source preparation.
+4. LLM provider/model invocation and duration.
+
+Use `--debug` instead when an exception traceback is also needed. Authentication SDK wire logs stay
+at `WARNING` unless `AUTH_SDK_LOG_LEVEL=INFO` is explicitly configured.
+
 Start an interactive loop using the scope in `.env`:
 
 ```powershell
@@ -178,17 +226,14 @@ not the Object ID.
 The all-sites mode does not enumerate sites. It asks the Retrieval API to search SharePoint without a
 path filter, and Microsoft 365 permission-trims results to content the signed-in user may access.
 
-## Answer grounding and citations
+## How each answer is produced
 
 1. The API returns up to 25 unordered document hits with one or more text extracts.
-2. The sample ranks extracts by `relevanceScore`, deduplicates them, and keeps source URLs.
+2. The sample orders sources by their highest `relevanceScore` to assign stable citation numbers.
 3. Extracts are serialized as untrusted JSON data with citation IDs.
 4. The model is told to ignore instructions embedded in documents and to answer only from the JSON.
 5. Application code appends the source list; the model never controls source URLs.
 6. If no usable extracts are found, the model is not called.
-
-`MAX_CONTEXT_CHARACTERS` protects the model context window. The default is 120,000 characters. A note
-is printed if context has to be truncated.
 
 ## Local debugging and Agent Inspector
 

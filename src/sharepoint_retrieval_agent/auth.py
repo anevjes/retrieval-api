@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -11,6 +12,8 @@ from typing import Any
 import msal
 
 GRAPH_DELEGATED_SCOPES = ("Files.Read.All", "Sites.Read.All")
+
+logger = logging.getLogger(__name__)
 
 
 class MsalAuthenticationError(RuntimeError):
@@ -93,13 +96,19 @@ class MsalDeviceCodeTokenProvider:
 
     def _get_token_sync(self) -> str:
         scopes = list(GRAPH_DELEGATED_SCOPES)
-        for account in self._application.get_accounts():
+        logger.info("[1/4] Authentication: checking the MSAL token cache.")
+        accounts = self._application.get_accounts()
+        for account in accounts:
             token = _access_token(
                 self._application.acquire_token_silent(scopes, account=account)
             )
             if token is not None:
+                logger.info("[1/4] Authentication: using a cached delegated Graph token.")
                 return token
 
+        logger.info(
+            "[1/4] Authentication: no usable cached token; starting MSAL device-code sign-in."
+        )
         flow = self._application.initiate_device_flow(scopes=scopes)
         if "user_code" not in flow:
             raise _authentication_error("Could not start Microsoft Graph sign-in", flow)
@@ -109,6 +118,7 @@ class MsalDeviceCodeTokenProvider:
         token = _access_token(result)
         if token is None:
             raise _authentication_error("Microsoft Graph sign-in failed", result)
+        logger.info("[1/4] Authentication: delegated Graph sign-in completed.")
         return token
 
     async def get_token(self) -> str:

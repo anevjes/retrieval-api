@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from .llm import TextGenerator
+import logging
+
+from .llm import AnswerSynthesizer
 from .models import GroundedAnswer
-from .retrieval import CopilotRetrievalClient, normalize_query
+from .retrieval import CopilotRetrievalClient
 from .scope import SharePointScope
 from .synthesis import build_grounding_prompt
 
@@ -12,54 +14,39 @@ _NO_RESULTS_MESSAGE = (
     "I couldn't find relevant information in the permitted SharePoint content for this question."
 )
 
+logger = logging.getLogger(__name__)
+
 
 class SharePointAnswerAgent:
-    """Run SharePoint retrieval first, then synthesize from validated extracts only."""
+    """Retrieve SharePoint documents, then synthesize only from validated extracts."""
 
     def __init__(
         self,
         *,
         retriever: CopilotRetrievalClient,
-        generator: TextGenerator,
+        synthesizer: AnswerSynthesizer,
         maximum_results: int = 25,
-        maximum_context_characters: int = 120_000,
     ) -> None:
         self._retriever = retriever
-        self._generator = generator
+        self._synthesizer = synthesizer
         self._maximum_results = maximum_results
-        self._maximum_context_characters = maximum_context_characters
 
     async def answer(self, question: str, *, scope: SharePointScope) -> GroundedAnswer:
         """Answer a question using only permission-trimmed SharePoint extracts."""
 
-        normalized_question = normalize_query(question)
-        retrieval = await self._retriever.retrieve(
-            normalized_question,
+        documents = await self._retriever.retrieve(
+            question,
             scope=scope,
             maximum_results=self._maximum_results,
         )
-        if not retrieval.hits:
-            return GroundedAnswer(
-                text=_NO_RESULTS_MESSAGE,
-                discarded_out_of_scope=retrieval.discarded_out_of_scope,
-            )
+        if not documents:
+            logger.info("[3/4] Grounding: no validated SharePoint sources; skipping synthesis.")
+            return GroundedAnswer(text=_NO_RESULTS_MESSAGE)
 
-        prompt, sources, truncated = build_grounding_prompt(
-            normalized_question,
-            retrieval.hits,
-            maximum_context_characters=self._maximum_context_characters,
+        logger.info(
+            "[3/4] Grounding: serializing %s validated SharePoint source(s) as untrusted data.",
+            len(documents),
         )
-        if not sources:
-            return GroundedAnswer(
-                text=_NO_RESULTS_MESSAGE,
-                discarded_out_of_scope=retrieval.discarded_out_of_scope,
-                context_was_truncated=truncated,
-            )
-
-        text = await self._generator.generate(prompt)
-        return GroundedAnswer(
-            text=text,
-            sources=sources,
-            discarded_out_of_scope=retrieval.discarded_out_of_scope,
-            context_was_truncated=truncated,
-        )
+        prompt, sources = build_grounding_prompt(question, documents)
+        text = await self._synthesizer.generate(prompt)
+        return GroundedAnswer(text=text, sources=sources)

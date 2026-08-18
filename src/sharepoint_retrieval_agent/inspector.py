@@ -1,4 +1,4 @@
-"""Optional Agent Framework DevUI/Foundry Toolkit Inspector host."""
+"""Optional tool-calling variant for Foundry Toolkit Agent Inspector."""
 
 from __future__ import annotations
 
@@ -9,20 +9,20 @@ from dataclasses import dataclass
 from agent_framework import Agent, tool
 
 from .auth import MsalDeviceCodeTokenProvider
-from .config import GraphSettings, LLMSettings, RuntimeSettings
-from .llm import SYNTHESIS_INSTRUCTIONS, Credential, build_chat_client
+from .config import GraphSettings, LLMSettings, RetrievalSettings
+from .llm import SYNTHESIS_INSTRUCTIONS, AzureCredential, build_chat_client
 from .retrieval import CopilotRetrievalClient
 from .scope import SharePointScope
-from .synthesis import build_grounding_prompt, sources_as_json
+from .synthesis import order_sources, sources_as_json
 
 
 @dataclass(slots=True)
 class InspectorResources:
     """Keep resources alive for the lifetime of the local Inspector server."""
 
-    token_provider: MsalDeviceCodeTokenProvider
+    graph_auth: MsalDeviceCodeTokenProvider
     retriever: CopilotRetrievalClient
-    model_credential: Credential | None
+    model_credential: AzureCredential | None
 
 
 def build_inspector_agent(
@@ -30,45 +30,33 @@ def build_inspector_agent(
     scope: SharePointScope,
     graph_settings: GraphSettings,
     llm_settings: LLMSettings,
-    runtime_settings: RuntimeSettings,
+    retrieval_settings: RetrievalSettings,
 ) -> tuple[Agent, InspectorResources]:
     """Build a tool-calling agent for interactive local inspection."""
 
-    token_provider = MsalDeviceCodeTokenProvider(
+    graph_auth = MsalDeviceCodeTokenProvider(
         tenant_id=graph_settings.tenant_id,
         client_id=graph_settings.client_id,
     )
-    retriever = CopilotRetrievalClient(token_provider)
+    retriever = CopilotRetrievalClient(graph_auth.get_token)
     client, model_credential = build_chat_client(llm_settings)
 
     @tool
     async def retrieve_sharepoint_documents(query: str) -> str:
         """Retrieve relevant documents only from the configured SharePoint site scope."""
 
-        result = await retriever.retrieve(
+        documents = await retriever.retrieve(
             query,
             scope=scope,
-            maximum_results=runtime_settings.maximum_results,
+            maximum_results=retrieval_settings.maximum_results,
         )
-        if not result.hits:
-            return json.dumps(
-                {
-                    "status": "no_results",
-                    "discardedOutOfScope": result.discarded_out_of_scope,
-                    "sources": [],
-                }
-            )
+        if not documents:
+            return json.dumps({"status": "no_results", "sources": []})
 
-        _, sources, truncated = build_grounding_prompt(
-            query,
-            result.hits,
-            maximum_context_characters=runtime_settings.maximum_context_characters,
-        )
+        sources = order_sources(documents)
         return json.dumps(
             {
                 "status": "ok",
-                "discardedOutOfScope": result.discarded_out_of_scope,
-                "contextWasTruncated": truncated,
                 "sources": json.loads(sources_as_json(sources)),
             },
             ensure_ascii=False,
@@ -88,7 +76,7 @@ calling it. Do not reproduce raw JSON or fabricate citations.
         tools=[retrieve_sharepoint_documents],
         default_options={"store": False},
     )
-    return agent, InspectorResources(token_provider, retriever, model_credential)
+    return agent, InspectorResources(graph_auth, retriever, model_credential)
 
 
 def run_inspector_server(
@@ -97,7 +85,7 @@ def run_inspector_server(
     scope: SharePointScope,
     graph_settings: GraphSettings,
     llm_settings: LLMSettings,
-    runtime_settings: RuntimeSettings,
+    retrieval_settings: RetrievalSettings,
 ) -> None:
     """Serve the agent on localhost for F5 and Foundry Toolkit Agent Inspector."""
 
@@ -112,7 +100,7 @@ def run_inspector_server(
         scope=scope,
         graph_settings=graph_settings,
         llm_settings=llm_settings,
-        runtime_settings=runtime_settings,
+        retrieval_settings=retrieval_settings,
     )
     # Keep resources referenced while the blocking development server runs.
     _ACTIVE_RESOURCES.append(resources)

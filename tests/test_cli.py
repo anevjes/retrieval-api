@@ -2,7 +2,44 @@ from __future__ import annotations
 
 import logging
 
-from sharepoint_retrieval_agent.cli import _configure_logging
+from sharepoint_retrieval_agent.cli import _configure_logging, build_parser
+
+
+def test_verbose_flag_works_before_or_after_the_subcommand() -> None:
+    parser = build_parser()
+
+    before = parser.parse_args(["--verbose", "ask", "Question"])
+    after = parser.parse_args(["ask", "--verbose", "Question"])
+
+    assert before.verbose
+    assert after.verbose
+
+
+def test_normal_logging_keeps_flow_logs_quiet(monkeypatch) -> None:
+    app_logger = logging.getLogger("sharepoint_retrieval_agent")
+    original_level = app_logger.level
+    try:
+        monkeypatch.delenv("AUTH_SDK_LOG_LEVEL", raising=False)
+
+        _configure_logging(verbose=False, debug=False)
+
+        assert not app_logger.isEnabledFor(logging.INFO)
+        assert app_logger.isEnabledFor(logging.WARNING)
+    finally:
+        app_logger.setLevel(original_level)
+
+
+def test_verbose_logging_enables_application_flow(monkeypatch) -> None:
+    app_logger = logging.getLogger("sharepoint_retrieval_agent")
+    original_level = app_logger.level
+    try:
+        monkeypatch.delenv("AUTH_SDK_LOG_LEVEL", raising=False)
+
+        _configure_logging(verbose=True, debug=False)
+
+        assert app_logger.isEnabledFor(logging.INFO)
+    finally:
+        app_logger.setLevel(original_level)
 
 
 def test_normal_logging_suppresses_expected_device_code_polling(monkeypatch) -> None:
@@ -13,11 +50,10 @@ def test_normal_logging_suppresses_expected_device_code_polling(monkeypatch) -> 
     original_http_level = http_logger.level
     original_msal_level = msal_logger.level
     try:
-        monkeypatch.setenv("LOG_LEVEL", "INFO")
         monkeypatch.delenv("AUTH_SDK_LOG_LEVEL", raising=False)
         monkeypatch.delenv("AZURE_SDK_LOG_LEVEL", raising=False)
 
-        _configure_logging(debug=False)
+        _configure_logging(verbose=True, debug=False)
 
         assert app_logger.isEnabledFor(logging.INFO)
         assert not http_logger.isEnabledFor(logging.INFO)
@@ -36,7 +72,7 @@ def test_auth_sdk_logging_can_be_enabled_explicitly(monkeypatch) -> None:
     try:
         monkeypatch.setenv("AUTH_SDK_LOG_LEVEL", "INFO")
 
-        _configure_logging(debug=False)
+        _configure_logging(verbose=False, debug=False)
 
         assert msal_logger.isEnabledFor(logging.INFO)
     finally:

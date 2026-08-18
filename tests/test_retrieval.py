@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable
+import logging
 
 import httpx
 import pytest
@@ -13,19 +13,18 @@ from sharepoint_retrieval_agent.retrieval import (
 from sharepoint_retrieval_agent.scope import SharePointScope
 
 
-class FakeTokenProvider:
-    def get_token(self) -> Awaitable[str]:
-        async def token() -> str:
-            return "delegated-token"
-
-        return token()
+async def get_access_token() -> str:
+    return "delegated-token"
 
 
 @pytest.mark.asyncio
-async def test_request_is_sharepoint_only_and_results_are_post_filtered() -> None:
+async def test_request_is_sharepoint_only_and_results_are_post_filtered(caplog) -> None:
     captured: dict[str, object] = {}
+    request_count = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
         captured.update(json.loads(request.content))
         assert request.headers["Authorization"] == "Bearer delegated-token"
         return httpx.Response(
@@ -57,24 +56,25 @@ async def test_request_is_sharepoint_only_and_results_are_post_filtered() -> Non
         )
 
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    client = CopilotRetrievalClient(
-        FakeTokenProvider(),
-        http_client=http_client,
-        maximum_attempts=1,
-    )
+    client = CopilotRetrievalClient(get_access_token, http_client=http_client)
     scope = SharePointScope.selected_sites(["https://contoso.sharepoint.com/sites/HR/"])
 
-    result = await client.retrieve("What is the policy?", scope=scope, maximum_results=25)
+    with caplog.at_level(logging.INFO, logger="sharepoint_retrieval_agent.retrieval"):
+        result = await client.retrieve("What is the policy?", scope=scope, maximum_results=25)
     await http_client.aclose()
 
     assert captured["dataSource"] == "sharePoint"
     assert captured["filterExpression"] == 'Path:"https://contoso.sharepoint.com/sites/HR/"'
     assert "oneDriveBusiness" not in json.dumps(captured)
     assert "externalItem" not in json.dumps(captured)
-    assert len(result.hits) == 1
-    assert result.hits[0].metadata["title"] == "Policy"
-    assert result.discarded_out_of_scope == 3
-    assert result.request_id == "request-123"
+    assert request_count == 1
+    assert len(result) == 1
+    assert result[0].title == "Policy"
+    assert result[0].author == "Adele"
+    assert "[2/4] Retrieval: POST" in caplog.text
+    assert "returned=4; accepted=1; discarded=3" in caplog.text
+    assert "delegated-token" not in caplog.text
+    assert "Approved policy text" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -85,7 +85,7 @@ async def test_all_sites_omits_filter_expression() -> None:
         return httpx.Response(200, json={"retrievalHits": []})
 
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    client = CopilotRetrievalClient(FakeTokenProvider(), http_client=http_client)
+    client = CopilotRetrievalClient(get_access_token, http_client=http_client)
 
     result = await client.retrieve(
         "Find the travel policy.",
@@ -93,7 +93,7 @@ async def test_all_sites_omits_filter_expression() -> None:
     )
     await http_client.aclose()
 
-    assert result.hits == ()
+    assert result == ()
 
 
 @pytest.mark.asyncio
@@ -106,11 +106,7 @@ async def test_graph_error_is_sanitized_and_preserves_request_id() -> None:
         )
 
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    client = CopilotRetrievalClient(
-        FakeTokenProvider(),
-        http_client=http_client,
-        maximum_attempts=1,
-    )
+    client = CopilotRetrievalClient(get_access_token, http_client=http_client)
 
     with pytest.raises(CopilotRetrievalError) as caught:
         await client.retrieve(

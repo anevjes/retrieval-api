@@ -108,25 +108,21 @@ class LLMSettings:
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeSettings:
-    """Retrieval and context-size settings."""
+class RetrievalSettings:
+    """Microsoft 365 Copilot Retrieval API settings."""
 
     maximum_results: int = 25
-    maximum_context_characters: int = 120_000
 
     @classmethod
-    def from_environment(cls, environment: Mapping[str, str] | None = None) -> RuntimeSettings:
+    def from_environment(cls, environment: Mapping[str, str] | None = None) -> RetrievalSettings:
         values = os.environ if environment is None else environment
         try:
             maximum_results = int(_value(values, "RETRIEVAL_MAX_RESULTS") or "25")
-            maximum_context = int(_value(values, "MAX_CONTEXT_CHARACTERS") or "120000")
         except ValueError as error:
-            raise ConfigurationError("Retrieval limits must be integers.") from error
+            raise ConfigurationError("RETRIEVAL_MAX_RESULTS must be an integer.") from error
         if not 1 <= maximum_results <= 25:
             raise ConfigurationError("RETRIEVAL_MAX_RESULTS must be between 1 and 25.")
-        if maximum_context < 4_000:
-            raise ConfigurationError("MAX_CONTEXT_CHARACTERS must be at least 4000.")
-        return cls(maximum_results, maximum_context)
+        return cls(maximum_results)
 
 
 def configured_site_urls(environment: Mapping[str, str] | None = None) -> tuple[str, ...]:
